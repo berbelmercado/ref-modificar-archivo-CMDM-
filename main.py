@@ -1,7 +1,7 @@
 """
 Módulo main.py
 
-Este módulo contiene el punto de entrada principal para la ejecución del sistema de procesamiento de archivos CMDM, integración con FTP y envío de correos de notificación. 
+Este módulo contiene el punto de entrada principal para la ejecución del sistema de procesamiento de archivos CMDM, integración con FTP y envío de correos de notificación.
 Orquesta el flujo completo de descarga, procesamiento, carga y notificación, utilizando los controladores definidos en el sistema.
 
 Dependencias:
@@ -33,73 +33,51 @@ Notas:
 - El flujo está diseñado para ser robusto ante archivos vacíos, errores de FTP y problemas de procesamiento.
 
 """
+
 from controlador.controlador_gestion_ftp import GestionFTP
 from controlador.controlador_gestion_correos import ControladorGestionCorreos
 from controlador.controlador_gestion_archivo_cmdm import ControladorGestionArchivoCmdm
 
 
 def main():
-    """
-    Función principal que orquesta el flujo de procesamiento de archivos CMDM:
-    - Descarga el archivo desde el FTP.
-    - Procesa el archivo y genera el nuevo archivo CMDM.
-    - Elimina el archivo original del FTP y carga el nuevo archivo.
-    - Envía correos de notificación según el resultado de las operaciones.
-    """
+
     obj_gestion_ftp = GestionFTP()
     obj_gestion_correos = ControladorGestionCorreos()
     obj_gestion_archivo = ControladorGestionArchivoCmdm()
 
-    #Descargamos el archivo desde el FTP
+    # Descarga archivo desde FTP
     retorno_descarga_ftp = obj_gestion_ftp.fn_descargar_archivo_ftp()
 
-    if retorno_descarga_ftp:
-        #Realizamos la modificación del archivo
-        retorno_archivo = obj_gestion_archivo.fn_gestion_archivo()
-        #Si el archivo no está vacío y no hay error eliminamos el archivo original del ftp
-        if retorno_archivo['error'] == True and retorno_archivo['tamano']==False:
-            #Eliminamos archivo
-            retorno_eliminacion_ftp = obj_gestion_ftp.fn_eliminar_archivo_ftp()
-            #Si se elimina correctamente cargamos el nuevo archivo
-            if retorno_eliminacion_ftp:
-                #Cargamos el archivo nuevo al FTP
-                retorno_carga_ftp  = obj_gestion_ftp.fn_cargar_archivo_ftp()
-                #si se carga correctamente el nuevo archivo
-                if retorno_carga_ftp:
-                    #Enviamos correo de modificaciones
-                    obj_gestion_correos.fn_correo_modificaciones()
-                else:
-                    #Enviamos correo de errores si falla la carga de nuevo archivo
-                    obj_gestion_correos.fn_correo_error()
-            else:
-                #Enviamos correo de errores si falla la eliminación del archivo viejo
-                obj_gestion_correos.fn_correo_error()
-
-        #si el archivo está vacío ejecutamos el proceso para cargar datos solo desde la bd
-        elif retorno_archivo['error'] == False and retorno_archivo['tamano']==True:
-
-            #Generamos archivo cmdm con información de la bd
-            retorno_archivo = obj_gestion_archivo.fn_cargar_data_cmdm()
-
-            if retorno_archivo['error'] == True:
-                #Eliminamos archivo
-                retorno_eliminacion_ftp = obj_gestion_ftp.fn_eliminar_archivo_ftp()
-                #Si se elimina correctamente cargamos el nuevo archivo
-                if retorno_eliminacion_ftp:
-                    #Cargamos el archivo nuevo al FTP
-                    retorno_carga_ftp  = obj_gestion_ftp.fn_cargar_archivo_ftp()
-                    #si se carga correctamente el nuevo archivo
-                    if retorno_carga_ftp:
-                        #Enviamos correo de modificaciones
-                        obj_gestion_correos.fn_correo_modificaciones()
-                    else:
-                        #Enviamos correo de errores si falla la carga de nuevo archivo
-                        obj_gestion_correos.fn_correo_error()
-                else:
-                    #Enviamos correo de errores si falla la eliminación del archivo viejo
-                    obj_gestion_correos.fn_correo_error()
-    else:
+    if not retorno_descarga_ftp:
         obj_gestion_correos.fn_correo_error()
+        return
 
-if __name__=="__main__":
+    # Procesa archivo (o delta si no existe/está vacío)
+    retorno_archivo = obj_gestion_archivo.fn_gestion_archivo()
+
+    # Si hubo un error en el pipeline → correo error
+    if retorno_archivo["error"]:
+        obj_gestion_correos.fn_correo_error()
+        return
+
+    # Si el pipeline fue exitoso → continuamos con FTP
+    # Eliminamos el archivo original del FTP
+    retorno_eliminacion_ftp = obj_gestion_ftp.fn_eliminar_archivo_ftp()
+
+    if not retorno_eliminacion_ftp:
+        obj_gestion_correos.fn_correo_error()
+        return
+
+    # Cargamos nuevo archivo CMDM generado al FTP
+    retorno_carga_ftp = obj_gestion_ftp.fn_cargar_archivo_ftp()
+
+    if not retorno_carga_ftp:
+        obj_gestion_correos.fn_correo_error()
+        return
+
+    # Todo bien → enviamos correo de modificaciones
+    obj_gestion_correos.fn_correo_modificaciones()
+
+
+if __name__ == "__main__":
     main()
