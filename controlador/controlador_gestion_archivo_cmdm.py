@@ -65,388 +65,247 @@ Notas:
 - El flujo está diseñado para ser robusto ante archivos vacíos, errores de consulta y problemas de actualización en la base de datos.
 
 """
+
 import config
 import pandas as pd
 from modelo.procesar_archivo import ProcesarArchivo
-from vista.envio_correo_modificaciones import  correo_modificacion_encuestas
-
 from vista.crear_log import crea_log
 
-class ControladorGestionArchivoCmdm():
-    """
-    Clase principal para la gestión y procesamiento de archivos CMDM.
 
-    Métodos:
-    --------
-    - fn_gestion_archivo: Ejecuta el flujo completo de procesamiento y actualización de datos CMDM.
-    - fn_cargar_data_cmdm: Ejecuta el flujo de carga y actualización de datos CMDM desde la base de datos.
-    """
+class ControladorGestionArchivoCmdm:
+
     def __init__(self):
-        """
-        Inicializa las rutas, columnas y DataFrames necesarios para el procesamiento.
-        """
         self.__ruta_archivo_cmdm = config.RUTA_GUARDAR_ARCHIVO
         self.__columnas_archivo_cmdm = config.COLUMNA_ARCHIVO_CMDM
-        self.__ruta_archivo_correo = config.RUTA_ARCHIVO_CORREO+config.NOMBRE_ARCHIVO_CORREO
+        self.__ruta_archivo_correo = (
+            config.RUTA_ARCHIVO_CORREO + config.NOMBRE_ARCHIVO_CORREO
+        )
         self.__ruta_archivo_backup = config.RUTA_ARCHIVO_BACUP
-        self.__obj_procesar_archivo = ProcesarArchivo()
-        #Declaración de dataframes
-        self.__dataframe_servicio_publico = pd.DataFrame(columns = ['SDI_VHCL.VIN'])
-        self.__dataframe = pd.DataFrame()
-        self.__dataframe_file_cmdm = pd.DataFrame(columns=config.COLUMNA_ARCHIVO_CMDM)
-        self.__dataframe_vin_no_dda = pd.DataFrame()
-        self.__dataframe_vin_dda = pd.DataFrame()
-        self.__df_reenvios = pd.DataFrame()
+        self.__obj = ProcesarArchivo()
 
+    # ==================================================
+    #                PIPELINE PRINCIPAL
+    # ==================================================
     def fn_gestion_archivo(self):
-        """
-        Ejecuta el flujo completo de procesamiento del archivo CMDM:
-        - Valida existencia y tamaño del archivo.
-        - Lee y trata datos nulos.
-        - Consulta reporte DDA y separa VINs entregados/no entregados.
-        - Inserta VINs no entregados en la tabla delta_cmdm_file.
-        - Consulta y actualiza estados en la base de datos.
-        - Fusiona DataFrames y actualiza fechas de entrega.
-        - Consulta y actualiza vehículos de servicio público.
-        - Consulta y procesa reenvíos.
-        - Modifica columna HO según acuerdos y tipo de vehículo.
-        - Prepara información para correo y genera archivo Excel.
-        - Elimina vehículos de servicio público del archivo final.
-        - Genera archivo CMDM y backup.
-        - Registra eventos y errores en el log.
-
-        Retorna:
-        --------
-        dict: Estado de la operación con claves 'error' y 'tamano'.
-        """
-        #Validamos si el archivo existe y no está vacío
-        if self.__obj_procesar_archivo.archivo_vacio(self.__ruta_archivo_cmdm):
-            #Leemos el archivo y retornamos un dataframe
-            dic_retorno_lectura_archivo = self.__obj_procesar_archivo.fn_leer_archivo(self.__ruta_archivo_cmdm)
-
-            #Si el archivo se leyó correctamente, procesamos los datos
-            if dic_retorno_lectura_archivo['exito']:
-
-                #Dataframe con toda la información en el archivo CMDM
-                self.__dataframe = dic_retorno_lectura_archivo['data']
-
-                #Procesamos los datos del dataframe convertimos los NaN a campos vacíos
-                self.__dataframe = self.__obj_procesar_archivo.fn_tratar_datos_nulos(self.__dataframe)
-
-                #Consultamos el reporte DDA con los VINs filtrados
-                dic_retorno_reporte_dda = self.__obj_procesar_archivo.consultar_reporte_dda(
-                    self.__dataframe['SDI_VHCL.VIN'].tolist())
-
-                #Si se consulta la información correctamente procedemos a seleccionar la información
-                if dic_retorno_reporte_dda['exito']:
-
-                    lista_vin_dda = dic_retorno_reporte_dda['data']
-
-                    #Separamos los VIN que están en DDA y los que no
-                    self.__dataframe_vin_no_dda, self.__dataframe_vin_dda = self.__obj_procesar_archivo.fn_separar_vin(
-                        lista_vin_dda, self.__dataframe)
-
-                    #Si hay datos que no están en dda procedemos a insertar la información en la tabla delta_cmdm
-                    if not self.__dataframe_vin_no_dda.empty:
-
-                        #Insertamos los VINs que no están en DDA en la tabla delta_cmdm_file
-                        dic_retorno_insercion_delta = self.__obj_procesar_archivo.fn_insertar_data_delta_cmdm(self.__dataframe_vin_no_dda)
-
-                        #Validamos si se inserta o no correctamente la información
-                        if dic_retorno_insercion_delta['exito']:
-
-                            #Consultamos la data de la tabla delta_cmdm_file que ya cuentan con entrega en DDA
-                            dic_retorno_consulta_delta = self.__obj_procesar_archivo.fn_consultar_data_delta_cmdm(
-                                self.__columnas_archivo_cmdm)
-
-                            if dic_retorno_consulta_delta['exito']:
-
-                                dataframe_db_dda = dic_retorno_consulta_delta['data']
-
-                                if not dataframe_db_dda.empty:
-                                    #Actualizamos el estado de los VINs que ya cuentan con entrega en DDA en la tabla delta_cmdm_file
-                                    dic_retorno_actualizacion_delta = self.__obj_procesar_archivo.fn_actualizar_estado_delta(
-                                        dataframe_db_dda['SDI_VHCL.VIN'].tolist())
-                                
-                                    #Si la actualización fue no fue exitosa realizamos creamos log y retornamos error
-                                    if not dic_retorno_actualizacion_delta['exito']:
-                                        crea_log(f'Error - Error al actualizar estado de VINs en delta_cmdm_file {dic_retorno_actualizacion_delta["error"]}')
-                                        return {'error':False, 'tamano':False}
-
-                                #de los VIN que si tienen entrega dda y los que se reprocesan
-                                self.__dataframe_file_cmdm = self.__obj_procesar_archivo.fn_fusionar_dataframes(
-                                    self.__dataframe_vin_dda
-                                    ,dataframe_db_dda)
-
-                                #Si hay datos con entregas en DDA se consultan las fechas
-                                if not self.__dataframe_file_cmdm.empty:
-                                    #Consultamos las fechas de entrega de los VINs en DDA
-                                    dic_retorno_fecha_dda = self.__obj_procesar_archivo.fn_consultar_fechas_dda_vin(
-                                        self.__dataframe_file_cmdm['SDI_VHCL.VIN'].tolist())
-
-                                    if dic_retorno_fecha_dda['exito']:
-                                        #Hacemos merge de los dos dataframes para agregar las fechas DDA
-                                        self.__dataframe_file_cmdm = self.__obj_procesar_archivo.fn_fusionar_dataframes_merge(
-                                            self.__dataframe_file_cmdm,
-                                            dic_retorno_fecha_dda['data'])
-
-                                        #Modificamos las fechas de entrega en extranet por las fechas de entrega en DDA
-                                        self.__dataframe_file_cmdm = self.__obj_procesar_archivo.fn_actualizar_fechas_archivo(
-                                            self.__dataframe_file_cmdm)
-                                    else:
-                                        crea_log (f'Error- error al consultar fechas de entrega DDA: {dic_retorno_fecha_dda["error"]}')
-                                        return {'error':False, 'tamano':False}
-
-                                #Consultamos los vehículos con servicio público almacenados en la tabla delta
-                                dict_retorno_data_publicos = self.__obj_procesar_archivo.fn_consultar_data_servicio_publico()
-
-                                if dict_retorno_data_publicos['exito']:
-                                    #Guardamos la información en el dataframe
-                                    self.__dataframe_servicio_publico = dict_retorno_data_publicos['data']
-                                    #Si el dataframe no está vacío actualizamos el estado en tabla delta cmdm
-                                    if not self.__dataframe_servicio_publico.empty:
-                                        dic_retorno_actualizacion_delta = self.__obj_procesar_archivo.fn_actualizar_estado_delta(
-                                        self.__dataframe_servicio_publico['SDI_VHCL.VIN'].tolist())
-
-                                        if not dic_retorno_actualizacion_delta['exito']:
-                                            crea_log('Error al actualizar estado de vehículos públicos')
-                                            return {'error':False,'tamano':False}
-                                else:
-                                    crea_log(f'Error al consultar vehículos públicos con entrega en DDA {dict_retorno_data_publicos['error']}')
-                                    return {'error':False,'tamano':False}
-
-                                #Consultamos los reenvíos
-                                dic_retorno_reenvio = self.__obj_procesar_archivo.fn_consultar_reenvios(
-                                    self.__columnas_archivo_cmdm)
-
-                                #Fusionamos el df de los VIN incluidos en el archivo con los reenvíos
-                                if dic_retorno_reenvio['exito']:
-
-                                    #Guardamos la información de la bd en la variable df_reenvios
-                                    self.__df_reenvios = dic_retorno_reenvio['data']
-
-                                    if not self.__df_reenvios.empty:
-                                        #Incluimos los reenvíos en el dataframe de los datos que van a quedar en el archivo CMDM
-                                        self.__dataframe_file_cmdm = self.__obj_procesar_archivo.fn_fusionar_dataframes(
-                                            self.__dataframe_file_cmdm
-                                            ,self.__df_reenvios)
-
-                                        #Actualizamos el estado para que no se repitan reenvíos
-                                        dic_retorno_actualizacion_delta = self.__obj_procesar_archivo.fn_actualizar_estado_delta(
-                                            self.__df_reenvios['SDI_VHCL.VIN'].tolist())
-
-                                        if not dic_retorno_actualizacion_delta['exito']:
-                                            crea_log(f'Error - Error al actualizar estado de VINs en delta_cmdm_file reenvios {dic_retorno_actualizacion_delta["error"]}')
-                                            return {'error':False, 'tamano':False}
-                                    
-                                    #Modificamos la columna HO para los VIN con acuerdos en si y vehiculos particulares
-                                    self.__dataframe_file_cmdm,dataframe_vin_modificados = self.__obj_procesar_archivo.fn_mod_col_ho(
-                                        self.__dataframe_file_cmdm)
-                                    #preparamos el archivo para correo y agregamos columna Entrega_dda con sus valores
-                                    df_entrega_dda = self.__obj_procesar_archivo.fn_prep_info_email(self.__dataframe_vin_no_dda
-                                                                                            ,self.__dataframe_vin_dda
-                                                                                            ,dataframe_db_dda
-                                                                                            ,self.__df_reenvios
-                                                                                            ,self.__dataframe_servicio_publico )
-
-                                    dic_retorno_email = self.__obj_procesar_archivo.fn_consul_info_email(
-                                        df_entrega_dda['SDI_VHCL.VIN'].tolist())
-
-                                    if dic_retorno_email['exito']:
-                                        #Fusionamos datarame con la información de la bd con las columnas de entrega dda para tener una columnas adicional
-                                        df_archivo_email = self.__obj_procesar_archivo.fn_fusionar_dataframes_merge(
-                                            dic_retorno_email['data']
-                                            ,df_entrega_dda
-                                        )
-
-                                        #Unimos dataframe consulta con los dataframes de preparación de correo
-                                        df_archivo_email = self.__obj_procesar_archivo.fn_columna_ho_email(
-                                            df_archivo_email
-                                            ,dataframe_vin_modificados
-                                            )
-
-                                        #Generamos archivo de excel 
-                                        self.__obj_procesar_archivo.fn_generar_archivo_ecxel(df_archivo_email
-                                                                                            ,self.__ruta_archivo_correo)
-                                        
-                                        #Eliminamos los vehículos con servicio público del archivo cmdm
-                                        self.__dataframe_file_cmdm = self.__obj_procesar_archivo.fn_eliminar_pub_cmdm(self.__dataframe_file_cmdm )
-
-                                        #Generamos archivo CMDM
-                                        self.__obj_procesar_archivo.fn_generar_archivo_cmdm(self.__dataframe_file_cmdm
-                                                                                            ,self.__ruta_archivo_cmdm)
-                                        
-                                        #Creamos backup para archivo cmdm
-                                        self.__obj_procesar_archivo.fn_generar_backup_archivo_cmdm(self.__dataframe
-                                                            ,self.__ruta_archivo_backup)
-                                        crea_log('Se modifica correctamente el archivo CMDM')
-
-                                        return {'error':True, 'tamano':False}
-
-                                    else:
-                                        crea_log(f'Error al consultar información para email: {dic_retorno_email['error']}')
-                                        return {'error':False, 'tamano':False}
-
-                                else:
-                                    #Si no hay reenvios o si ocurre un error en la consulta creamos log
-                                    crea_log(f'Reenvio: {dic_retorno_reenvio['error']}')
-                                    return {'error':False, 'tamano':False}
-                            else:
-                                crea_log (f'Error- error al consultar data almacenada en tabla delta cmdm {dic_retorno_consulta_delta["error"]}')
-                                return {'error':False, 'tamano':False}
-                        else:
-                            crea_log(f"""Error - Error al insertar información de la data que no esta en DDA fn_insertar_data_delta_cmdm:
-                                      {dic_retorno_insercion_delta["error"]}""")
-                            return {'error':False, 'tamano':False}
-                else:
-                    crea_log(f'Error- error al consultar reporte DDA: {dic_retorno_reporte_dda["error"]}')
-                    return {'error':False, 'tamano':False}
-            else:
-                crea_log('Error - No se pudo leer el archivo')
-                return {'error':False, 'tamano':False}
-        else:
-            crea_log('Archivo cmdm vacio')
-            return {'error':False,'tamano':True}
-
-    def fn_cargar_data_cmdm(self):
-        """
-        Ejecuta el flujo de carga de datos CMDM desde la tabla delta_cmdm_file:
-        - Consulta datos procesados.
-        - Actualiza estados y fechas de entrega.
-        - Consulta y actualiza vehículos de servicio público.
-        - Procesa reenvíos y actualiza estados.
-        - Modifica columna HO y prepara información para correo.
-        - Genera archivo Excel y CMDM final.
-        - Registra eventos y errores en el log.
-
-        Retorna:
-        --------
-        dict: Estado de la operación con clave 'error'.
-        """
-        #Consultamos si hay vin con entrega en CMDM en la tabla delta_cmdm_file
-        dic_retorno_consulta_delta = self.__obj_procesar_archivo.fn_consultar_data_delta_cmdm(
-            self.__columnas_archivo_cmdm)
-
-        if dic_retorno_consulta_delta['exito']:
-
-            self.__dataframe_file_cmdm = dic_retorno_consulta_delta['data']
-
-            #Si hay procesados
-            if not self.__dataframe_file_cmdm.empty:
-                #Actualizamos el estado de los VINs que ya cuentan con entrega en DDA en la tabla delta_cmdm_file
-                dic_retorno_actualizacion_delta = self.__obj_procesar_archivo.fn_actualizar_estado_delta(
-                    self.__dataframe_file_cmdm['SDI_VHCL.VIN'].tolist())
-
-                if not dic_retorno_actualizacion_delta['exito']:
-                    crea_log(f'Error - Error al actualizar estado de VINs en delta_cmdm_file {dic_retorno_actualizacion_delta["error"]}')
-                    return {'error':False}
-
-                #Consultamos las fechas de entrega de los VINs en DDA
-                dic_retorno_fecha_dda = self.__obj_procesar_archivo.fn_consultar_fechas_dda_vin(
-                    self.__dataframe_file_cmdm['SDI_VHCL.VIN'].tolist())
-
-                if dic_retorno_fecha_dda['exito']:
-                    #Hacemos merge de los dos dataframes para agregar las fechas DDA
-                    self.__dataframe_file_cmdm = self.__obj_procesar_archivo.fn_fusionar_dataframes_merge(
-                        self.__dataframe_file_cmdm,
-                        dic_retorno_fecha_dda['data'])
-
-                    #Modificamos las fechas de entrega en extranet por las fechas de entrega en DDA
-                    self.__dataframe_file_cmdm = self.__obj_procesar_archivo.fn_actualizar_fechas_archivo(
-                        self.__dataframe_file_cmdm)
-                else:
-                    crea_log (f'Error- error al consultar fechas de entrega DDA: {dic_retorno_fecha_dda["error"]}')
-                    return {'error':False}
-
-                #Consultamos los vehículos con servicio público almacenados en la tabla delta
-                dict_retorno_data_publicos = self.__obj_procesar_archivo.fn_consultar_data_servicio_publico()
-
-                if dict_retorno_data_publicos['exito']:
-                    #Guardamos la información en el dataframe
-                    self.__dataframe_servicio_publico = dict_retorno_data_publicos['data']
-                    #Si el dataframe no está vacío actualizamos el estado en tabla delta cmdm
-                    if not self.__dataframe_servicio_publico.empty:
-                        dic_retorno_actualizacion_delta = self.__obj_procesar_archivo.fn_actualizar_estado_delta(
-                        self.__dataframe_servicio_publico['SDI_VHCL.VIN'].tolist())
-
-                        if not dic_retorno_actualizacion_delta['exito']:
-                            crea_log('Error al actualizar estado de vehículos públicos')
-                            return {'error':False}
-                else:
-                    crea_log(f'Error al consultar vehículos públicos con entrega en DDA {dict_retorno_data_publicos['error']}')
-                    return {'error':False}
-
-            #Consultamos los reenvíos
-            dic_retorno_reenvio = self.__obj_procesar_archivo.fn_consultar_reenvios(
-                self.__columnas_archivo_cmdm)
-
-            #Fusionamos el df de los VIN incluidos en el archivo con los reenvíos
-            if dic_retorno_reenvio['exito']:
-
-                #Guardamos la información de la bd en la variable df_reenvios
-                self.__df_reenvios = dic_retorno_reenvio['data']
-
-                if not self.__df_reenvios.empty:
-                    #Incluimos los reenvíos en el dataframe de los datos que van a quedar en el archivo CMDM
-                    self.__dataframe_file_cmdm = self.__obj_procesar_archivo.fn_fusionar_dataframes(
-                        self.__dataframe_file_cmdm
-                        ,self.__df_reenvios)
-
-                    #Actualizamos el estado para que no se repitan reenvíos
-                    dic_retorno_actualizacion_delta = self.__obj_procesar_archivo.fn_actualizar_estado_delta(
-                        self.__df_reenvios['SDI_VHCL.VIN'].tolist())
-
-                    if not dic_retorno_actualizacion_delta['exito']:
-                        crea_log(f'Error - Error al actualizar estado de VINs en delta_cmdm_file reenvios {dic_retorno_actualizacion_delta["error"]}')
-                        return {'error':False}
-
-                #Modificamos la columna HO para los VIN con acuerdos en si y vehiculos particulares
-                self.__dataframe_file_cmdm,dataframe_vin_modificados = self.__obj_procesar_archivo.fn_mod_col_ho(
-                    self.__dataframe_file_cmdm)
-
-                #preparamos el archivo para correo y agregamos columna Entrega_dda con sus valores
-                df_entrega_dda = self.__obj_procesar_archivo.fn_prep_info_email(
-                                                                        dataframe_lista_cmdm= self.__dataframe_file_cmdm
-                                                                        ,dataframe_reenvios_cmdm = self.__df_reenvios
-                                                                        ,dataframe_servicio_publico= self.__dataframe_servicio_publico )
-
-                dic_retorno_email = self.__obj_procesar_archivo.fn_consul_info_email(
-                    df_entrega_dda['SDI_VHCL.VIN'].tolist())
-
-                if dic_retorno_email['exito']:
-                    #Fusionamos datarame con la información de la bd con las columnas de entrega dda para tener una columnas adicional
-                    df_archivo_email = self.__obj_procesar_archivo.fn_fusionar_dataframes_merge(
-                        dic_retorno_email['data']
-                        ,df_entrega_dda
-                    )
-
-                    #Unimos dataframe consulta con los dataframes de preparación de correo
-                    df_archivo_email = self.__obj_procesar_archivo.fn_columna_ho_email(
-                        df_archivo_email
-                        ,dataframe_vin_modificados
-                        )
-
-                    #Generamos archivo de excel 
-                    self.__obj_procesar_archivo.fn_generar_archivo_ecxel(df_archivo_email
-                                                                        ,self.__ruta_archivo_correo)
-
-                    #Eliminamos los vehículos con servicio público del archivo cmdm
-                    self.__dataframe_file_cmdm = self.__obj_procesar_archivo.fn_eliminar_pub_cmdm(self.__dataframe_file_cmdm )
-
-                    #Generamos archivo CMDM
-                    self.__obj_procesar_archivo.fn_generar_archivo_cmdm(self.__dataframe_file_cmdm
-                                                                        ,self.__ruta_archivo_cmdm)
-
-                    crea_log('Se crea correctamente el archivo CMDM con información de la tabla delta')
-                    return {'error':True}
-                else:
-                    crea_log(f'Error al consultar información para email: {dic_retorno_email['error']}')
-                    return {'error':False}
-
-            else:
-                #Si no hay reenvios o si ocurre un error en la consulta creamos log
-                crea_log(f'Reenvio: {dic_retorno_reenvio['error']}')
-                return {'error':False}
-        else:
-            crea_log (f'Error- error al consultar data almacenada en tabla delta cmdm {dic_retorno_consulta_delta["error"]}')
-            return {'error':False}
+
+        contexto = {}
+
+        pasos = [
+            self._validar_archivo,
+            self._leer_archivo_si_existe,
+            self._tratar_datos,
+            self._consultar_reporte_dda,
+            self._separar_vines,
+            self._insertar_no_dda,
+            self._consultar_delta,
+            self._actualizar_delta,
+            self._fusionar_data,
+            self._consultar_fechas_dda,
+            self._aplicar_fechas,
+            self._consultar_servicio_publico,
+            self._consultar_reenvios,
+            self._modificar_ho,
+            self._preparar_info_email,
+            self._consultar_info_email,
+            self._generar_excel,
+            self._eliminar_publicos,
+            self._generar_cmdm,
+            self._generar_backup,
+        ]
+
+        for paso in pasos:
+            res = paso(contexto)
+            if not res["ok"]:
+                crea_log(f"Error en {paso.__name__}: {res['error']}")
+                return {"error": True, "tamano": False}
+
+        return {"error": False, "tamano": True}
+
+    # ==================================================
+    #            DEFINICIÓN DE CADA ETAPA
+    # ==================================================
+
+    def _validar_archivo(self, ctx):
+        ctx["archivo_tiene_contenido"] = self.__obj.archivo_vacio(
+            self.__ruta_archivo_cmdm
+        )
+        return {"ok": True}
+
+    def _leer_archivo_si_existe(self, ctx):
+        if not ctx["archivo_tiene_contenido"]:
+            ctx["df"] = pd.DataFrame(columns=self.__columnas_archivo_cmdm)
+            return {"ok": True}
+
+        res = self.__obj.fn_leer_archivo(self.__ruta_archivo_cmdm)
+        if not res["exito"]:
+            return {"ok": False, "error": "No se pudo leer archivo CMDM"}
+
+        ctx["df"] = res["data"]
+        return {"ok": True}
+
+    def _tratar_datos(self, ctx):
+        if ctx["df"].empty:
+            return {"ok": True}
+
+        ctx["df"] = self.__obj.fn_tratar_datos_nulos(ctx["df"])
+        return {"ok": True}
+
+    def _consultar_reporte_dda(self, ctx):
+        lista_vin = ctx["df"]["SDI_VHCL.VIN"].tolist() if not ctx["df"].empty else []
+
+        res = self.__obj.consultar_reporte_dda(lista_vin)
+        if not res["exito"]:
+            return {"ok": False, "error": res["error"]}
+
+        ctx["vin_dda"] = res["data"]
+        return {"ok": True}
+
+    def _separar_vines(self, ctx):
+
+        df = ctx["df"]
+
+        if df.empty:
+            ctx["df_no_dda"] = pd.DataFrame()
+            ctx["df_dda"] = pd.DataFrame()
+            return {"ok": True}
+
+        df_no_dda, df_dda = self.__obj.fn_separar_vin(ctx["vin_dda"], df)
+
+        ctx["df_no_dda"] = df_no_dda
+        ctx["df_dda"] = df_dda
+        return {"ok": True}
+
+    def _insertar_no_dda(self, ctx):
+        if ctx["df_no_dda"].empty:
+            return {"ok": True}
+
+        r = self.__obj.fn_insertar_data_delta_cmdm(ctx["df_no_dda"])
+        if not r["exito"]:
+            return {"ok": False, "error": r["error"]}
+
+        return {"ok": True}
+
+    def _consultar_delta(self, ctx):
+        r = self.__obj.fn_consultar_data_delta_cmdm(self.__columnas_archivo_cmdm)
+        if not r["exito"]:
+            return {"ok": False, "error": r["error"]}
+
+        ctx["df_delta"] = r["data"]
+        return {"ok": True}
+
+    def _actualizar_delta(self, ctx):
+        if ctx["df_delta"].empty:
+            return {"ok": True}
+
+        lista_vin = ctx["df_delta"]["SDI_VHCL.VIN"].tolist()
+        r = self.__obj.fn_actualizar_estado_delta(lista_vin)
+
+        if not r["exito"]:
+            return {"ok": False, "error": r["error"]}
+
+        return {"ok": True}
+
+    def _fusionar_data(self, ctx):
+        df_total = self.__obj.fn_fusionar_dataframes(ctx["df_dda"], ctx["df_delta"])
+        ctx["df_final"] = df_total
+        return {"ok": True}
+
+    def _consultar_fechas_dda(self, ctx):
+        if ctx["df_final"].empty:
+            ctx["df_fechas"] = pd.DataFrame()
+            return {"ok": True}
+
+        lista_vin = ctx["df_final"]["SDI_VHCL.VIN"].tolist()
+        r = self.__obj.fn_consultar_fechas_dda_vin(lista_vin)
+
+        if not r["exito"]:
+            return {"ok": False, "error": r["error"]}
+
+        ctx["df_fechas"] = r["data"]
+        return {"ok": True}
+
+    def _aplicar_fechas(self, ctx):
+        if ctx["df_final"].empty:
+            return {"ok": True}
+
+        df = self.__obj.fn_fusionar_dataframes_merge(ctx["df_final"], ctx["df_fechas"])
+        df = self.__obj.fn_actualizar_fechas_archivo(df)
+
+        ctx["df_final"] = df
+        return {"ok": True}
+
+    def _consultar_servicio_publico(self, ctx):
+        r = self.__obj.fn_consultar_data_servicio_publico()
+        if not r["exito"]:
+            return {"ok": False, "error": r["error"]}
+
+        ctx["df_publicos"] = r["data"]
+        return {"ok": True}
+
+    def _consultar_reenvios(self, ctx):
+        r = self.__obj.fn_consultar_reenvios(self.__columnas_archivo_cmdm)
+        if not r["exito"]:
+            return {"ok": False, "error": r["error"]}
+
+        ctx["df_reenvios"] = r["data"]
+
+        if not ctx["df_reenvios"].empty:
+            ctx["df_final"] = self.__obj.fn_fusionar_dataframes(
+                ctx["df_final"], ctx["df_reenvios"]
+            )
+
+        return {"ok": True}
+
+    def _modificar_ho(self, ctx):
+        df, df_mod = self.__obj.fn_mod_col_ho(ctx["df_final"])
+        ctx["df_final"] = df
+        ctx["df_mod_ho"] = df_mod
+        return {"ok": True}
+
+    def _preparar_info_email(self, ctx):
+
+        df_email = self.__obj.fn_prep_info_email(
+            dataframe_vin_no_dda=ctx["df_no_dda"],
+            dataframe_vin_dda_email=ctx["df_dda"],
+            dataframe_lista_cmdm=ctx["df_delta"],
+            dataframe_reenvios_cmdm=ctx["df_reenvios"],
+            dataframe_servicio_publico=ctx["df_publicos"],
+        )
+
+        ctx["df_email_pre"] = df_email
+        return {"ok": True}
+
+    def _consultar_info_email(self, ctx):
+        lista_vin = ctx["df_email_pre"]["SDI_VHCL.VIN"].tolist()
+        r = self.__obj.fn_consul_info_email(lista_vin)
+
+        if not r["exito"]:
+            return {"ok": False, "error": r["error"]}
+
+        df = self.__obj.fn_fusionar_dataframes_merge(r["data"], ctx["df_email_pre"])
+        df = self.__obj.fn_columna_ho_email(df, ctx["df_mod_ho"])
+
+        ctx["df_email_final"] = df
+        return {"ok": True}
+
+    def _generar_excel(self, ctx):
+        self.__obj.fn_generar_archivo_ecxel(
+            ctx["df_email_final"], self.__ruta_archivo_correo
+        )
+        return {"ok": True}
+
+    def _eliminar_publicos(self, ctx):
+        ctx["df_final"] = self.__obj.fn_eliminar_pub_cmdm(ctx["df_final"])
+        return {"ok": True}
+
+    def _generar_cmdm(self, ctx):
+        self.__obj.fn_generar_archivo_cmdm(ctx["df_final"], self.__ruta_archivo_cmdm)
+        return {"ok": True}
+
+    def _generar_backup(self, ctx):
+        if not ctx["df"].empty:
+            self.__obj.fn_generar_backup_archivo_cmdm(
+                ctx["df"], self.__ruta_archivo_backup
+            )
+
+        return {"ok": True}
