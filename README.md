@@ -116,8 +116,8 @@ Instalación y configuración
 ```bash
 git clone https://github.com/berbelmercado/ref-modificar-archivo-CMDM-.git
 cd ref-modificar-archivo-CMDM-
-2. Crear entorno virtual e instalar dependencias
 ```
+2. Crear entorno virtual e instalar dependencias
 ```bash
 python -m venv venv
 venv\Scripts\activate
