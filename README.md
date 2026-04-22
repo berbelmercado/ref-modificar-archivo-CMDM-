@@ -97,8 +97,14 @@ ref-modificar-archivo-CMDM-/
 │   └── envio_correo_errores.py                  # Correo SMTP de notificación de error
 │
 └── servicios/
-    ├── consulta_correos_destinatarios.py        # Consulta destinatarios desde SQL Server
-    └── consultar_ruta_ftp.py                    # Consulta ruta FTP dinámica desde SQL Server
+|   ├── consulta_correos_destinatarios.py        # Consulta destinatarios desde SQL Server
+|   └── consultar_ruta_ftp.py                    # Consulta ruta FTP dinámica desde SQL Server
+└── Log/
+|   └── log.txt                                  # Almacenamiento de logs
+|
+└── Recursos                                     # Se guardan los archivos que se descargan desde el ftp y se genera el archivo de excel que se envía porcorreo
+    ├── CDM.CSV                                 
+    └── ecxel.xlsx
 ```
 | Tecnología | Uso |
 | --- | --- |
@@ -146,6 +152,7 @@ RUTA_ARCHIVO_CORREO=./archivos/correo/
 RUTA_ARCHIVO_BACKUP=./archivos/backup/
 ```
 4. Ejecutar
+5. Crear las carpetas Recursos Y Logs 
 ```bash
 python main.py
 ```
