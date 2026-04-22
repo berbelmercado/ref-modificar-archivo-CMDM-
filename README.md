@@ -127,6 +127,7 @@ pip install -r requeriments.txt
 Crea un archivo config.py o .env basándote en la plantilla de ejemplo:
 
 env
+``` bash
 # SQL Server
 SERVIDOR_SQL=tu_servidor
 BASE_DE_DATOS=tu_base_de_datos
@@ -143,7 +144,7 @@ SMTP_PASSWORD=contraseña
 RUTA_GUARDAR_ARCHIVO=./archivos/cmdm/
 RUTA_ARCHIVO_CORREO=./archivos/correo/
 RUTA_ARCHIVO_BACKUP=./archivos/backup/
-
+```
 4. Ejecutar
 ```bash
 python main.py
