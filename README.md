@@ -1,10 +1,10 @@
-# 📦 Automatización de Procesamiento CMDM — Integración FTP + SQL Server + SMTP
+#  Automatización de Procesamiento CMDM — Integración FTP + SQL Server + SMTP
 
 Sistema de automatización end-to-end que orquesta el ciclo completo de procesamiento de archivos CSV/CMDM para clientes de Renault Colombia (SOFASA). Integra servidores FTP, bases de datos SQL Server y notificaciones por correo electrónico, implementado con arquitectura MVC en Python.
 
 ---
 
-## 🚀 ¿Qué hace este proyecto?
+##  ¿Qué hace este proyecto?
 
 El sistema reemplaza un proceso manual de actualización de archivos de encuestas de satisfacción de clientes automotrices, automatizando cada paso del pipeline de extremo a extremo:
 
@@ -14,14 +14,14 @@ El sistema reemplaza un proceso manual de actualización de archivos de encuesta
 3. **Elimina** el archivo original del FTP una vez procesado correctamente
 4. **Carga** el nuevo archivo CMDM generado al servidor FTP
 5. **Notifica** el resultado por correo electrónico:
-   - ✅ Correo de modificaciones exitosas si todo el pipeline es correcto
-   - ❌ Correo de error con detalle de la etapa fallida si ocurre algún problema
+   -  Correo de modificaciones exitosas si todo el pipeline es correcto
+   -  Correo de error con detalle de la etapa fallida si ocurre algún problema
 
 El manejo de errores está implementado por etapas: si cualquier paso del pipeline falla, el sistema detiene la ejecución y envía una notificación de error inmediatamente, sin continuar con pasos posteriores.
 
 ---
 
-## 🏗️ Arquitectura
+##  Arquitectura
 
 El proyecto sigue el patrón de diseño **MVC (Modelo-Vista-Controlador)**, lo que permite separar claramente las responsabilidades y facilitar la extensión del sistema sin modificar la lógica central.
 
@@ -56,7 +56,7 @@ ref-modificar-archivo-CMDM/
 
 ---
 
-## 🛠️ Tecnologías utilizadas
+##  Tecnologías utilizadas
 
 | Tecnología | Uso |
 |---|---|
@@ -71,7 +71,7 @@ ref-modificar-archivo-CMDM/
 
 ---
 
-## ⚙️ Instalación y configuración
+##  Instalación y configuración
 
 ### 1. Clonar el repositorio
 
@@ -113,7 +113,7 @@ SMTP_PASSWORD=contraseña_correo
 CORREO_DESTINO=destinatario@empresa.com
 ```
 
-> ⚠️ **Nunca subas el archivo `.env` al repositorio.** Está incluido en `.gitignore`.
+>  **Nunca subas el archivo `.env` al repositorio.** Está incluido en `.gitignore`.
 
 ### 4. Ejecutar el sistema
 
@@ -123,7 +123,7 @@ python main.py
 
 ---
 
-## 📋 Requisitos previos
+##  Requisitos previos
 
 - Python 3.10+
 - Acceso a SQL Server con las tablas de reglas de negocio configuradas
@@ -133,7 +133,7 @@ python main.py
 
 ---
 
-## 📌 Notas de despliegue
+##  Notas de despliegue
 
 Este sistema fue diseñado para ejecutarse como tarea programada en un servidor Windows. El ejecutable generado con **PyInstaller** permite desplegarlo sin necesidad de tener Python instalado en el servidor de producción.
 
