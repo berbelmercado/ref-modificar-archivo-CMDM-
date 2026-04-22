@@ -1,152 +1,153 @@
-#  Automatización de Procesamiento CMDM — Integración FTP + SQL Server + SMTP
+# Automatización de Archivo CMDM — Encuestas de Satisfacción Renault Colombia
 
-Sistema de automatización end-to-end que orquesta el ciclo completo de procesamiento de archivos CSV/CMDM para clientes de Renault Colombia (SOFASA). Integra servidores FTP, bases de datos SQL Server y notificaciones por correo electrónico, implementado con arquitectura MVC en Python.
-
----
-
-##  ¿Qué hace este proyecto?
-
-El sistema reemplaza un proceso manual de actualización de archivos de encuestas de satisfacción de clientes automotrices, automatizando cada paso del pipeline de extremo a extremo:
-
-1. **Descarga** el archivo CMDM vigente desde un servidor FTP remoto
-2. **Procesa** el archivo CSV aplicando reglas de negocio almacenadas en SQL Server  
-   - Si el archivo está vacío o no existe, genera el CMDM directamente desde la base de datos
-3. **Elimina** el archivo original del FTP una vez procesado correctamente
-4. **Carga** el nuevo archivo CMDM generado al servidor FTP
-5. **Notifica** el resultado por correo electrónico:
-   -  Correo de modificaciones exitosas si todo el pipeline es correcto
-   -  Correo de error con detalle de la etapa fallida si ocurre algún problema
-
-El manejo de errores está implementado por etapas: si cualquier paso del pipeline falla, el sistema detiene la ejecución y envía una notificación de error inmediatamente, sin continuar con pasos posteriores.
+Sistema de automatización end-to-end para el procesamiento del archivo **CMDM** de encuestas de satisfacción de clientes Renault en Colombia (SOFASA).  
+Integra servidores FTP, bases de datos SQL Server con múltiples fuentes (**SGS, SISC, CONEXION, DATASTEWARD**), lógica de negocio compleja sobre VINs y notificaciones automáticas por correo electrónico.
 
 ---
 
-##  Arquitectura
+## ¿Qué problema resuelve?
 
-El proyecto sigue el patrón de diseño **MVC (Modelo-Vista-Controlador)**, lo que permite separar claramente las responsabilidades y facilitar la extensión del sistema sin modificar la lógica central.
+El archivo CMDM es el insumo principal para el sistema de encuestas de satisfacción de Renault.  
+El proceso manual implicaba:
 
-```
-ref-modificar-archivo-CMDM/
+- Descargar el archivo desde el FTP  
+- Cruzarlo con múltiples bases de datos  
+- Aplicar reglas de negocio sobre tipos de vehículo, acuerdos de comunicación, vehículos de servicio público y reenvíos  
+- Generar el archivo final actualizado  
+- Cargarlo nuevamente al FTP  
+
+Este sistema **automatiza cada paso del flujo**, reduciendo errores y tiempos de ejecución.
+
+---
+
+## 🚀 Flujo del pipeline
+```text
+FTP] ──descarga──► [Validación y lectura CSV]
 │
-├── main.py                          # Orquestador principal del pipeline
-├── config.py                        # Configuración centralizada (credenciales, rutas, parámetros)
-├── requeriments.txt                 # Dependencias del proyecto
+▼
+[SQL Server: consulta reporte DDA]
+│
+┌────────────┴────────────┐
+▼                         ▼
+VINs con entrega DDA      VINs sin entrega DDA
+│                         │
+│                 INSERT delta_cmdm_file
+│                         │
+└────────────┬────────────┘
+▼
+[Consulta y actualización de estados delta]
+│
+▼
+[Fusión de DataFrames + fechas de entrega DDA]
+│
+▼
+[Consulta vehículos servicio público → exclusión]
+│
+▼
+[Consulta y procesamiento de reenvíos]
+│
+▼
+[Modificación columna HO según acuerdos y tipo VP/VU]
+│
+▼
+[Generación Excel para correo + archivo CMDM + backup]
+│
+┌──────┴──────┐
+▼             ▼
+[FTP: carga]   [SMTP: correo modificaciones]
+│             │
+si error ──────► [SMTP: correo errores]
+```
+
+---
+
+## Arquitectura
+
+```text
+ref-modificar-archivo-CMDM-/
+│
+├── main.py                                      # Orquestador principal del pipeline
+├── config.py                                    # Configuración centralizada (rutas, columnas, BD)
+├── requeriments.txt
 │
 ├── controlador/
-│   ├── controlador_gestion_ftp.py          # Operaciones FTP: descarga, eliminación, carga
-│   ├── controlador_gestion_correos.py      # Envío de notificaciones SMTP
-│   └── controlador_gestion_archivo_cmdm.py # Lógica de procesamiento del archivo CMDM
+│   ├── controlador_gestion_archivo_cmdm.py      # Pipeline principal (20 etapas encadenadas)
+│   │                                            # Cada etapa es un método independiente que
+│   │                                            # recibe y enriquece un contexto compartido (dict)
+│   ├── controlador_gestion_ftp.py               # Conexión, descarga, eliminación y carga FTP
+│   │                                            # Consulta la ruta FTP dinámica desde SQL Server
+│   └── controlador_gestion_correos.py           # Envío de correos de modificaciones y errores
+│                                                # Consulta destinatarios desde SQL Server
 │
-├── modelo/                          # Capa de acceso a datos (SQL Server)
+├── modelo/
+│   ├── consultas_sql.py                         # Capa de acceso a datos (715 líneas):
+│   │                                            #   - Consulta reporte DDA por lista de VINs
+│   │                                            #   - INSERT masivo a delta_cmdm_file (executemany)
+│   │                                            #   - Validación VINs entregados tipo VP/VU
+│   │                                            #   - Consulta y actualización de estados
+│   │                                            #   - Query de información completa para correo
+│   │                                            #     (cruza SGS, SISC, CONEXION, DATASTEWARD)
+│   │                                            #   - Consulta destinatarios y rutas FTP desde BD
+│   └── conexion_ftp.py                          # Operaciones FTP: conectar, validar, descargar,
+│                                                # eliminar y cargar archivos
 │
-└── vista/                           # Capa de presentación / reportes
+├── vista/
+│   ├── crear_log.py                             # Registro de eventos e errores en archivo .log
+│   ├── envio_correo_modificaciones.py           # Correo SMTP con Excel adjunto de cambios
+│   └── envio_correo_errores.py                  # Correo SMTP de notificación de error
+│
+└── servicios/
+    ├── consulta_correos_destinatarios.py        # Consulta destinatarios desde SQL Server
+    └── consultar_ruta_ftp.py                    # Consulta ruta FTP dinámica desde SQL Server
 ```
-
-### Flujo del pipeline
-
-```
-[FTP Server] ──descarga──► [Procesamiento CSV + SQL Server] ──elimina──► [FTP Server]
-                                        │                                      │
-                                        ▼                                      ▼
-                              [Archivo CMDM generado] ──────carga──────► [FTP Server]
-                                        │
-                                        ▼
-                              [SMTP] ──► Correo modificaciones / error
-```
-
----
-
-##  Tecnologías utilizadas
-
 | Tecnología | Uso |
-|---|---|
+| --- | --- |
 | **Python 3.x** | Lenguaje principal |
-| **Pandas** | Procesamiento y transformación de archivos CSV |
-| **pyodbc** | Conexión y consultas a SQL Server |
-| **ftplib** (stdlib) | Integración con servidor FTP |
-| **smtplib** (stdlib) | Envío de notificaciones por correo SMTP |
-| **python-dotenv** | Gestión segura de variables de entorno |
-| **openpyxl** | Soporte para archivos Excel si se requiere |
-| **PyInstaller** | Empaquetado como ejecutable `.exe` para despliegue en producción |
+| **Pandas** | Lectura, transformación y fusión de DataFrames CSV/Excel |
+| **pyodbc** | Conexión y operaciones a SQL Server (múltiples bases de datos) |
+| **ftplib** | Integración FTP: descarga, eliminación y carga de archivos |
+| **smtplib** | Envío de correos automáticos con adjuntos Excel |
+| **openpyxl** | Generación de archivos Excel para correo y backup |
+| **python-dotenv** | Gestión segura de credenciales |
+| **PyInstaller** | Empaquetado como ejecutable ``.exe`` para producción |
 
----
-
-##  Instalación y configuración
-
-### 1. Clonar el repositorio
-
-```bash
+Instalación y configuración
+1. Clonar el repositorio
+bash
 git clone https://github.com/berbelmercado/ref-modificar-archivo-CMDM-.git
 cd ref-modificar-archivo-CMDM-
-```
-
-### 2. Crear entorno virtual e instalar dependencias
-
-```bash
+2. Crear entorno virtual e instalar dependencias
+bash
 python -m venv venv
-venv\Scripts\activate        # Windows
+venv\Scripts\activate
 pip install -r requeriments.txt
-```
+3. Configurar variables de entorno
+Crea un archivo config.py o .env basándote en la plantilla de ejemplo:
 
-### 3. Configurar variables de entorno
-
-Crea un archivo `.env` en la raíz del proyecto basándote en la plantilla:
-
-```env
+env
 # SQL Server
-DB_SERVER=tu_servidor
-DB_NAME=tu_base_de_datos
-DB_USER=tu_usuario
-DB_PASSWORD=tu_contraseña
+SERVIDOR_SQL=tu_servidor
+BASE_DE_DATOS=tu_base_de_datos
+USUARIO_SQL=tu_usuario
+CONTRASENA_SQL=tu_contraseña
 
-# FTP
-FTP_HOST=ftp.servidor.com
-FTP_USER=usuario_ftp
-FTP_PASSWORD=contraseña_ftp
-FTP_RUTA_REMOTA=/ruta/en/ftp/
-
-# SMTP / Correo
+# SMTP
 SMTP_HOST=smtp.servidor.com
 SMTP_PORT=587
 SMTP_USER=correo@empresa.com
-SMTP_PASSWORD=contraseña_correo
-CORREO_DESTINO=destinatario@empresa.com
-```
+SMTP_PASSWORD=contraseña
 
->  **Nunca subas el archivo `.env` al repositorio.** Está incluido en `.gitignore`.
+# Rutas
+RUTA_GUARDAR_ARCHIVO=./archivos/cmdm/
+RUTA_ARCHIVO_CORREO=./archivos/correo/
+RUTA_ARCHIVO_BACKUP=./archivos/backup/
+⚠️ Nunca subas credenciales al repositorio. Están excluidas por .gitignore.
 
-### 4. Ejecutar el sistema
-
-```bash
+4. Ejecutar
+bash
 python main.py
-```
+📌 Despliegue en producción
+El sistema se despliega como tarea programada en Windows. Para generar el ejecutable:
 
----
-
-##  Requisitos previos
-
-- Python 3.10+
-- Acceso a SQL Server con las tablas de reglas de negocio configuradas
-- Credenciales FTP válidas con permisos de lectura, escritura y eliminación
-- Cuenta SMTP habilitada para envío de correos automáticos
-- Windows (para despliegue como `.exe` con PyInstaller)
-
----
-
-##  Notas de despliegue
-
-Este sistema fue diseñado para ejecutarse como tarea programada en un servidor Windows. El ejecutable generado con **PyInstaller** permite desplegarlo sin necesidad de tener Python instalado en el servidor de producción.
-
-Para generar el ejecutable:
-
-```bash
+bash
 pyinstaller --onefile main.py
-```
-
----
-
-## 👤 Autor
-
-**Mauricio Berbel Mercado**  
-Técnico de Sistemas de Información — Positivo S+  
-[LinkedIn](https://linkedin.com/in/tu-perfil) · [GitHub](https://github.com/berbelmercado)
