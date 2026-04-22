@@ -92,7 +92,7 @@ ref-modificar-archivo-CMDM-/
 │                                                # eliminar y cargar archivos
 │
 ├── vista/
-│   ├── crear_log.py                             # Registro de eventos e errores en archivo .log
+│   ├── crear_log.py                             # Registro de eventos e errores en archivo log.txt
 │   ├── envio_correo_modificaciones.py           # Correo SMTP con Excel adjunto de cambios
 │   └── envio_correo_errores.py                  # Correo SMTP de notificación de error
 │
