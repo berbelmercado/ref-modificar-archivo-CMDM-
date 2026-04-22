@@ -113,14 +113,16 @@ ref-modificar-archivo-CMDM-/
 
 Instalación y configuración
 1. Clonar el repositorio
-bash
+```bash
 git clone https://github.com/berbelmercado/ref-modificar-archivo-CMDM-.git
 cd ref-modificar-archivo-CMDM-
 2. Crear entorno virtual e instalar dependencias
-bash
+```
+```bash
 python -m venv venv
 venv\Scripts\activate
 pip install -r requeriments.txt
+```
 3. Configurar variables de entorno
 Crea un archivo config.py o .env basándote en la plantilla de ejemplo:
 
@@ -141,12 +143,12 @@ SMTP_PASSWORD=contraseña
 RUTA_GUARDAR_ARCHIVO=./archivos/cmdm/
 RUTA_ARCHIVO_CORREO=./archivos/correo/
 RUTA_ARCHIVO_BACKUP=./archivos/backup/
-⚠️ Nunca subas credenciales al repositorio. Están excluidas por .gitignore.
 
 4. Ejecutar
-bash
+```bash
 python main.py
-📌 Despliegue en producción
+```
+Despliegue en producción
 El sistema se despliega como tarea programada en Windows. Para generar el ejecutable:
 
 bash
